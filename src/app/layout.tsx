@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import AuthContext from "./context/AuthContext";
 
 export const metadata: Metadata = {
   title: "Khione | 양자 트레이딩 대시보드",
@@ -13,7 +14,11 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="ko">
-      <body>{children}</body>
+      <body>
+        <AuthContext>
+          {children}
+        </AuthContext>
+      </body>
     </html>
   );
 }

@@ -1,97 +1,262 @@
 "use client";
 
-import React from "react";
+import React, { useState, useEffect } from "react";
+
+interface SystemStatus {
+  is_trading_active: boolean;
+  current_regime: string;
+  agent_allocations: Record<string, number>;
+  active_positions_count: number;
+  api_connected: boolean;
+  model_version?: string;
+  model_updated?: string;
+}
+
+interface NewsItem {
+  title: string;
+  source: string;
+  time: string;
+  url: string;
+  sentiment: string;
+}
+
+interface JournalEntry {
+  date: string;
+  regime: string;
+  pnl: number;
+  strategy_summary: string;
+  trade_summary: string;
+  news_events: string;
+  tomorrow_plan: string;
+}
+
+const AGENT_TOOLTIPS: Record<string, string> = {
+  agent1_scalping: "단타/모멘텀: RSI, MACD 기반 단기 추세 포착. STABLE/BULL 레짐에서 비중 높음",
+  agent2_day: "데이/외인: 외국인 순매수 + 거래량 이상 탐지. 변동성 구간에서 활성화",
+  agent3_meta: "스윙/안전: 거시지표(금리, 환율) + DART 공시 기반. FEAR 레짐 방어용",
+};
 
 export default function Dashboard() {
+  const [status, setStatus] = useState<SystemStatus | null>(null);
+  const [news, setNews] = useState<NewsItem[]>([]);
+  const [lastUpdated, setLastUpdated] = useState<string>("");
+  const [isLoading, setIsLoading] = useState(true);
+  const [autoSync, setAutoSync] = useState<boolean>(false);
+  const [syncTimer, setSyncTimer] = useState<NodeJS.Timeout | null>(null);
+  const [journalDate, setJournalDate] = useState<string>(() => {
+    const d = new Date();
+    return `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}`;
+  });
+  const [journalList, setJournalList] = useState<JournalEntry[]>([]);
+  const [currentJournal, setCurrentJournal] = useState<JournalEntry | null>(null);
+
+  const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
+  const fetchStatus = async () => {
+    try {
+      const response = await fetch(`${API_URL}/api/v1/status`);
+      const data = await response.json();
+      setStatus(data);
+      setIsLoading(false);
+    } catch (error) {
+      console.error("Failed to fetch status:", error);
+      setIsLoading(false);
+    } finally {
+      setLastUpdated(new Date().toLocaleString("ko-KR", {
+        year: "numeric", month: "2-digit", day: "2-digit",
+        hour: "2-digit", minute: "2-digit", second: "2-digit"
+      }));
+    }
+  };
+
+  const fetchNews = async () => {
+    try {
+      const response = await fetch(`${API_URL}/api/v1/market/news`);
+      const data = await response.json();
+      setNews(data);
+    } catch (error) {
+      console.error("Failed to fetch news:", error);
+    } finally {
+      setLastUpdated(new Date().toLocaleString("ko-KR", {
+        year: "numeric", month: "2-digit", day: "2-digit",
+        hour: "2-digit", minute: "2-digit", second: "2-digit"
+      }));
+    }
+  };
+
+  const stopSync = () => {
+    if (syncTimer) {
+      clearInterval(syncTimer);
+      setSyncTimer(null);
+    }
+    setAutoSync(false);
+  };
+
+  const startSync = () => {
+    fetchStatus();
+    fetchNews();
+    const timer = setInterval(() => {
+      fetchStatus();
+      fetchNews();
+    }, 5000);
+    setSyncTimer(timer);
+    setAutoSync(true);
+    // 5분 후 자동 종료
+    setTimeout(() => stopSync(), 5 * 60 * 1000);
+  };
+
+  const fetchJournalList = async () => {
+    try {
+      const res = await fetch(`${API_URL}/api/v1/journal?limit=30`);
+      const data = await res.json();
+      setJournalList(data);
+    } catch (e) { console.error(e); }
+  };
+
+  const fetchJournal = async (date: string) => {
+    try {
+      const res = await fetch(`${API_URL}/api/v1/journal/${date}`);
+      if (res.status === 404) { setCurrentJournal(null); return; }
+      const data = await res.json();
+      setCurrentJournal(data);
+    } catch (e) { console.error(e); }
+  };
+
+  const handleJournalDateChange = (date: string) => {
+    setJournalDate(date);
+    fetchJournal(date);
+  };
+
+  const handleKillSwitch = async () => {
+    if (confirm("🚨 정말로 모든 트레이딩을 중단하고 비상 정지하시겠습니까?")) {
+      try {
+        await fetch(`${API_URL}/api/v1/kill-switch`, { method: "POST" });
+        alert("비상 정지 명령이 전송되었습니다.");
+        fetchStatus();
+      } catch (error) {
+        alert("명령 전송에 실패했습니다.");
+      }
+    }
+  };
+
+  useEffect(() => {
+    fetchStatus();
+    fetchJournalList();
+    return () => {
+      if (syncTimer) clearInterval(syncTimer);
+    };
+  }, []);
+
+  if (isLoading && !status) {
+    return <div className="loading">❄️ KHIONE 시스템 로딩 중...</div>;
+  }
+
   return (
     <div className="dashboard-grid">
-      {/* Header */}
+      {/* ... (Header, Left Sidebar, Main Content remain same) ... */}
       <header className="header glass-panel">
         <div className="title-glow">❄️ 키오네 (KHIONE) 터미널</div>
-        <div style={{ color: "var(--text-secondary)" }}>
-          마지막 동기화: 2026.04.23 13:58:22 | 시장 레짐: <strong style={{ color: "var(--accent-blue)" }}>변동장 (Volatility)</strong>
+        <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
+          <span style={{ color: "var(--text-secondary)" }}>
+            마지막 동기화: {lastUpdated || "—"} | 시장 레짐: <strong style={{ color: "var(--accent-blue)" }}>{status?.current_regime || "LOADING"}</strong>
+          </span>
+          <button
+            onClick={autoSync ? stopSync : startSync}
+            style={{
+              padding: "6px 14px",
+              borderRadius: "6px",
+              border: "1px solid var(--accent-blue)",
+              background: autoSync ? "rgba(255,80,80,0.15)" : "rgba(0,180,255,0.15)",
+              color: autoSync ? "#ff5050" : "var(--accent-blue)",
+              cursor: "pointer",
+              fontSize: "0.85rem",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {autoSync ? "⏹ 동기화 중지" : "🔄 동기화 시작"}
+          </button>
         </div>
       </header>
 
-      {/* Left Sidebar: Agent Stream */}
+      {/* Left Sidebar */}
       <aside className="sidebar">
         <div className="glass-panel agent-list">
           <h3 style={{ borderBottom: "1px solid rgba(255,255,255,0.1)", paddingBottom: "10px" }}>🧠 에이전트 가중치 (실시간)</h3>
           
-          <div className="agent-item">
+          <div className="agent-item" title={AGENT_TOOLTIPS.agent1_scalping}>
             <div className="agent-header">
               <span>Agent 1 (단타/모멘텀)</span>
-              <span>70%</span>
+              <span>{((status?.agent_allocations.agent1_scalping || 0) * 100).toFixed(0)}%</span>
             </div>
             <div className="progress-bg">
-              <div className="progress-fill" style={{ width: "70%" }}></div>
+              <div className="progress-fill" style={{ width: `${(status?.agent_allocations.agent1_scalping || 0) * 100}%` }}></div>
             </div>
           </div>
 
-          <div className="agent-item">
+          <div className="agent-item" title={AGENT_TOOLTIPS.agent2_day}>
             <div className="agent-header">
               <span>Agent 2 (데이/외인)</span>
-              <span>20%</span>
+              <span>{((status?.agent_allocations.agent2_day || 0) * 100).toFixed(0)}%</span>
             </div>
             <div className="progress-bg">
-              <div className="progress-fill" style={{ width: "20%" }}></div>
+              <div className="progress-fill" style={{ width: `${(status?.agent_allocations.agent2_day || 0) * 100}%` }}></div>
             </div>
           </div>
 
-          <div className="agent-item">
+          <div className="agent-item" title={AGENT_TOOLTIPS.agent3_meta}>
             <div className="agent-header">
               <span>Agent 3 (스윙/안전)</span>
-              <span>10%</span>
+              <span>{((status?.agent_allocations.agent3_meta || 0) * 100).toFixed(0)}%</span>
             </div>
             <div className="progress-bg">
-              <div className="progress-fill" style={{ width: "10%" }}></div>
+              <div className="progress-fill" style={{ width: `${(status?.agent_allocations.agent3_meta || 0) * 100}%` }}></div>
             </div>
           </div>
           
           <p style={{ fontSize: "0.8rem", color: "var(--text-secondary)", marginTop: "10px" }}>
-            * Agent 3의 판단에 따라 단기 변동성 수익 극대화 중
+            * Agent 3의 판단에 따라 {status?.current_regime === "VOLATILE" ? "단기 변동성 수익 극대화 중" : "안정적 추세 추종 중"}
           </p>
         </div>
 
         <div className="glass-panel log-panel">
           <h3 style={{ borderBottom: "1px solid rgba(255,255,255,0.1)", paddingBottom: "10px", marginBottom: "10px" }}>📡 의사결정 스트림</h3>
           <div className="log-entry">
-            <span className="log-time">13:55:12</span>
-            <span className="badge buy">매수</span>
-            <span>삼성전자 500주 (신호: A1, RSI 30)</span>
-          </div>
-          <div className="log-entry">
-            <span className="log-time">13:52:05</span>
-            <span className="badge sell">익절</span>
-            <span>SK하이닉스 200주 (+1.2%)</span>
-          </div>
-          <div className="log-entry">
-            <span className="log-time">13:45:00</span>
-            <span style={{ color: "var(--text-secondary)" }}>[Agent 3]</span>
-            <span>시장 변동성 증가 감지. 단타 비중 10% 상향 조정.</span>
-          </div>
-          <div className="log-entry">
-            <span className="log-time">13:30:00</span>
-            <span style={{ color: "var(--text-secondary)" }}>[뉴스감지]</span>
-            <span>반도체 섹터 긍정적 기사 다수 (감성: +0.72)</span>
+            <span className="log-time">{lastUpdated}</span>
+            <span className={`badge ${status?.is_trading_active ? 'buy' : 'sell'}`}>
+              {status?.is_trading_active ? 'ACTIVE' : 'IDLE'}
+            </span>
+            <span>시스템 상태 동기화 완료</span>
           </div>
         </div>
       </aside>
 
-      {/* Main Content: Chart & KPI */}
+      {/* Main Content */}
       <main style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
         <div className="kpi-row">
           <div className="glass-panel kpi-card">
-            <span className="kpi-label">총 운용 자산 (KRW)</span>
-            <span className="kpi-value">₩ 124,530,000</span>
+            <span className="kpi-label">보유 포지션 수</span>
+            <span className="kpi-value">{status?.active_positions_count || 0} 종목</span>
           </div>
           <div className="glass-panel kpi-card">
-            <span className="kpi-label">당일 실현 손익</span>
-            <span className="kpi-value kpi-up">+ ₩ 1,250,000 (1.02%)</span>
+            <span className="kpi-label">트레이딩 활성화</span>
+            <span className={`kpi-value ${status?.is_trading_active ? 'kpi-up' : 'kpi-down'}`}>
+              {status?.is_trading_active ? 'ON' : 'OFF'}
+            </span>
           </div>
           <div className="glass-panel kpi-card">
-            <span className="kpi-label">최대 낙폭 (MDD)</span>
-            <span className="kpi-value kpi-down">- 1.2% (안전)</span>
+            <span className="kpi-label">네트워크 지연</span>
+            <span className="kpi-value">8ms (안정)</span>
+          </div>
+          <div className="glass-panel kpi-card">
+            <span className="kpi-label">PPO 모델 버전</span>
+            <span className="kpi-value">
+              {status?.model_version || "PPO v1"}
+              {status?.model_updated && (
+                <span style={{ fontSize: "0.7em", color: "var(--text-secondary)", marginLeft: "6px" }}>
+                  ({status.model_updated})
+                </span>
+              )}
+            </span>
           </div>
         </div>
 
@@ -99,7 +264,7 @@ export default function Dashboard() {
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <h3>📈 종합 전략 차트 (KOSPI 200)</h3>
             <span className="badge" style={{ background: "rgba(255,255,255,0.1)", border: "1px solid var(--accent-blue)" }}>
-              실시간 동기화 중
+              {status?.api_connected ? "실시간 동기화 중" : "연결 대기 중"}
             </span>
           </div>
           <div className="chart-placeholder">
@@ -109,37 +274,93 @@ export default function Dashboard() {
         </div>
       </main>
 
-      {/* Right Sidebar: Risk & Settings */}
+      {/* Right Sidebar: News Timeline */}
       <aside className="sidebar">
         <div className="glass-panel kill-switch-panel">
           <h2 style={{ color: "var(--up-color)" }}>🚨 비상 정지 시스템</h2>
-          <p style={{ fontSize: "0.85rem", color: "var(--text-secondary)" }}>
-            시장 급락 또는 돌발 변수(Black Swan) 발생 시 모든 신규 진입을 중단하고 즉시 포지션을 청산합니다.
-          </p>
-          <button className="kill-btn">KILL SWITCH (전량 청산)</button>
+          <button 
+            className="kill-btn" 
+            onClick={handleKillSwitch}
+            disabled={!status?.is_trading_active}
+          >
+            KILL SWITCH (전량 청산)
+          </button>
         </div>
 
-        <div className="glass-panel" style={{ padding: "20px", flex: 1 }}>
-          <h3 style={{ borderBottom: "1px solid rgba(255,255,255,0.1)", paddingBottom: "10px", marginBottom: "15px" }}>⚙️ 운영 상태</h3>
-          
-          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "10px" }}>
-            <span>API 연결 상태:</span>
-            <strong style={{ color: "#22c55e" }}>정상 (8ms)</strong>
-          </div>
-          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "10px" }}>
-            <span>남은 호출 횟수:</span>
-            <strong>194 / 200 (분)</strong>
-          </div>
-          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "10px" }}>
-            <span>강화학습 모델:</span>
-            <strong style={{ color: "var(--accent-blue)" }}>PPO_v4.2 (Active)</strong>
-          </div>
-          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "10px" }}>
-            <span>돌발변수 스캐너:</span>
-            <strong style={{ color: "#22c55e" }}>작동 중 (Level 0)</strong>
+        <div className="glass-panel" style={{ padding: "20px", flex: 1, display: "flex", flexDirection: "column" }}>
+          <h3 style={{ borderBottom: "1px solid rgba(255,255,255,0.1)", paddingBottom: "10px", marginBottom: "15px" }}>📰 AI 뉴스 타임라인</h3>
+          <div className="news-feed" style={{ flex: 1, overflowY: "auto" }}>
+            {news.map((item, idx) => (
+              <a href={item.url} target="_blank" rel="noopener noreferrer" key={idx} className="news-item-link">
+                <div className="news-card">
+                  <div className="news-meta">
+                    <span className="news-source">{item.source}</span>
+                    <span className="news-time">{item.time}</span>
+                  </div>
+                  <div className="news-title">{item.title}</div>
+                  <div className={`news-sentiment ${item.sentiment.toLowerCase()}`}>
+                    {item.sentiment === "POSITIVE" ? "↗ 긍정적 분석" : "↘ 주의 요망"}
+                  </div>
+                </div>
+              </a>
+            ))}
           </div>
         </div>
       </aside>
+
+      {/* 투자일지 - full-width bottom panel */}
+      <div className="journal-panel glass-panel">
+        <div className="journal-header">
+          <h2>📔 투자일지</h2>
+          <select
+            value={journalDate}
+            onChange={(e) => handleJournalDateChange(e.target.value)}
+            className="journal-select"
+          >
+            {journalList.map(j => (
+              <option key={j.date} value={j.date}>
+                {j.date.replace(/(\d{4})(\d{2})(\d{2})/, '$1-$2-$3')}
+                {` (${j.pnl >= 0 ? '+' : ''}${j.pnl.toLocaleString()}원)`}
+              </option>
+            ))}
+            {!journalList.find(j => j.date === journalDate) && (
+              <option value={journalDate}>{journalDate} (오늘)</option>
+            )}
+          </select>
+        </div>
+        {currentJournal ? (
+          <div className="journal-content">
+            <div className="journal-row">
+              <span className="label">레짐</span>
+              <span>{currentJournal.regime}</span>
+            </div>
+            <div className="journal-row">
+              <span className="label">손익</span>
+              <span className={currentJournal.pnl >= 0 ? "profit" : "loss"}>
+                {currentJournal.pnl >= 0 ? "+" : ""}{currentJournal.pnl.toLocaleString()}원
+              </span>
+            </div>
+            <div className="journal-section">
+              <div className="label">전략 요약</div>
+              <div className="journal-text">{currentJournal.strategy_summary || "—"}</div>
+            </div>
+            <div className="journal-section">
+              <div className="label">매매 내역</div>
+              <div className="journal-text">{currentJournal.trade_summary || "—"}</div>
+            </div>
+            <div className="journal-section">
+              <div className="label">주요 이벤트</div>
+              <div className="journal-text">{currentJournal.news_events || "—"}</div>
+            </div>
+            <div className="journal-section">
+              <div className="label">내일 계획</div>
+              <div className="journal-text">{currentJournal.tomorrow_plan || "—"}</div>
+            </div>
+          </div>
+        ) : (
+          <div className="journal-empty">이 날짜의 일지가 없습니다.</div>
+        )}
+      </div>
     </div>
   );
 }
