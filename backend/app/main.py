@@ -23,11 +23,18 @@ async def lifespan(app: FastAPI):
     await init_db()
     logger.info("🗄️ Database initialized.")
 
-    # 1. Start Telegram Bot
+    # 0-1. Shadow Bot 초기화 (DB 테이블 생성 후)
+    try:
+        from app.engine.meta_agent_allocator import meta_agent_allocator
+        await meta_agent_allocator.initialize_shadows()
+    except Exception as e:
+        logger.warning(f"Shadow Bot 초기화 실패 (무시): {e}")
+
+    # 1. Start Telegram Bot (drop_pending_updates로 이전 충돌 방지)
     if telegram_app:
         await telegram_app.initialize()
         await telegram_app.start()
-        await telegram_app.updater.start_polling()
+        await telegram_app.updater.start_polling(drop_pending_updates=True)
         logger.info("🤖 Telegram Bot started successfully.")
     else:
         logger.warning("⚠️ Telegram Bot is disabled (Invalid token).")
@@ -97,7 +104,13 @@ async def trigger_kill_switch():
     """시스템 비상 정지 및 전량 청산 명령을 트리거합니다."""
     logger.warning("🚨 KILL SWITCH TRIGGERED VIA API")
     global_state.set_trading_active(False)
-    # TODO: 실제 청산 로직 연동
+    from app.execution.auto_trader import auto_trader
+    from app.telegram_bot.notifier import send_telegram_notification
+    try:
+        await auto_trader.liquidate_all()
+        await send_telegram_notification("🚨 <b>킬스위치 발동</b>\n전량 시장가 청산 명령 실행 완료")
+    except Exception as e:
+        logger.error(f"킬스위치 청산 오류: {e}")
     return {"message": "Kill switch activated successfully", "status": "SHUTDOWN"}
 
 @app.get("/api/v1/health")

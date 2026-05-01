@@ -15,6 +15,11 @@ class SystemState(BaseModel):
     active_positions: Dict[str, Any] = Field(default_factory=dict, description="현재 보유 중인 포지션 목록 {symbol: {qty, avg_price, ...}}")
     today_watch_list: Dict[str, str] = Field(default_factory=dict, description="당일 스크리닝 확정 종목 {symbol: name}. 매일 08:30 갱신.")
     decision_stream: List[Any] = Field(default_factory=list, description="최근 의사결정 기록 (최대 20건)")
+    macro_data: Dict[str, Any] = Field(
+        default_factory=lambda: {"base_rate": 0.0, "usd_krw": 0.0, "dart_summary": ""},
+        description="거시지표 캐시 (DART 공시, 한국은행 금리/환율) - 08:30 수집"
+    )
+
 
     def update_allocation(self, allocations: Dict[str, float]) -> None:
         """Agent3(메타 에이전트)에 의해 결정된 자산 배분 비율을 업데이트합니다."""

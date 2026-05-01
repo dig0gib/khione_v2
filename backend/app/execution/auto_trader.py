@@ -89,6 +89,7 @@ class AutoTrader:
     async def morning_screening(self) -> None:
         """
         아침 스크리닝 (08:30)
+        0. DART 공시 + ECOS 금리/환율 수집 (거시 브리핑)
         1. 거래대금 상위 N개 후보 수집 (ka10020) — 실패 시 WATCH_LIST 폴백
         2. Agent1 AQL 필터 적용 → BUY 신호 종목만 선별
         3. 통과 종목 부족 시 HOLD 종목으로 보완
@@ -98,9 +99,19 @@ class AutoTrader:
         from app.engine.agent1_scalping import ScalpingAgent
         from app.telegram_bot.notifier import send_telegram_notification
         from app.config.watchlist import WATCH_LIST, SCREENING_TOP_N, SCREENING_MIN_CANDIDATES
+        from app.data.external_api import external_data_manager
         import asyncio
 
         agent1 = ScalpingAgent()
+
+        # 0. 거시 데이터 수집 (DART + ECOS)
+        macro = {"base_rate": 0.0, "usd_krw": 0.0, "dart_summary": "수집 안됨"}
+        try:
+            macro = await external_data_manager.get_morning_macro_briefing()
+            # Agent3 레짐 판단에 금리/환율 반영
+            global_state.macro_data = macro
+        except Exception as e:
+            logging.warning(f"[스크리닝] 거시 데이터 수집 실패: {e}")
 
         # 1. 거래대금 상위 N개 후보 수집
         candidates = await kiwoom_market.get_top_volume_stocks(SCREENING_TOP_N)
@@ -167,6 +178,9 @@ class AutoTrader:
             f"❄️ <b>Khione 오늘의 공략 종목 리포트</b>\n\n"
             f"📅 {datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
             f"거래대금 상위 {len(candidates)}개 → AQL 필터 → <b>{len(passed)}개 확정</b>\n\n"
+            f"📊 <b>거시지표</b>\n"
+            f"  기준금리: {macro.get('base_rate', 0)}% | USD/KRW: {macro.get('usd_krw', 0):,.0f}\n"
+            f"  주요공시: {macro.get('dart_summary', '없음')[:80]}\n\n"
         )
         report += "\n\n".join(report_lines) if report_lines else "스크리닝 결과 없음"
         report += "\n\n🚀 자동매매는 09:00부터 시작됩니다. /status 로 현황 확인 가능"

@@ -33,6 +33,73 @@ class Agent1Scalping:
         self.positions: Dict[str, Dict[str, Any]] = {}  # {code: {qty, entry_price, entry_time}}
         self.logger = logging.getLogger(self.__class__.__name__)
 
+    # ── signal_generator 호환 인터페이스 ──────────────────────────────────────
+    async def analyze(self, market_data) -> Dict[str, Any]:
+        """
+        signal_generator에서 호출하는 호환 메서드.
+        OHLCV DataFrame에서 체결강도/거래대금을 추출하여 진입 조건을 평가.
+        (실시간 호가 콜백 없이도 동작)
+        """
+        if market_data.empty or len(market_data) < 2:
+            return {"action": "HOLD", "score": 0.0, "confidence": 0.0, "agent": self.agent_id}
+
+        latest = market_data.iloc[0]
+        prev = market_data.iloc[1]
+
+        # OHLCV에서 추출 가능한 지표
+        close = float(latest.get("close", 0))
+        volume = float(latest.get("volume", 0))
+        prev_close = float(prev.get("close", 0))
+
+        # 체결강도 근사: 양봉이면 매수 우세로 추정
+        if prev_close > 0:
+            tick_strength_approx = (close / prev_close) * 100  # 100 기준
+        else:
+            tick_strength_approx = 100.0
+
+        # 거래대금 근사
+        daily_amount = close * volume
+
+        # 호가 역설 근사: 고가/저가 스프레드로 추정
+        high = float(latest.get("high", close))
+        low = float(latest.get("low", close))
+        if low > 0:
+            spread_ratio = high / low
+        else:
+            spread_ratio = 1.0
+
+        # 목표가 계산
+        target_price = int(close * self.TAKE_PROFIT_RATIO)
+
+        # 조건 평가
+        if (daily_amount >= self.MIN_DAILY_AMOUNT
+                and spread_ratio >= 1.01
+                and tick_strength_approx >= 101.0
+                and close > prev_close):
+            return {
+                "action": "BUY",
+                "score": 0.8,
+                "confidence": min(0.9, tick_strength_approx / 200),
+                "target_price": target_price,
+                "agent": self.agent_id,
+            }
+        elif close < prev_close * self.STOP_LOSS_RATIO:
+            return {
+                "action": "SELL",
+                "score": 0.2,
+                "confidence": 0.7,
+                "target_price": target_price,
+                "agent": self.agent_id,
+            }
+        return {
+            "action": "HOLD",
+            "score": 0.5,
+            "confidence": 0.5,
+            "target_price": target_price,
+            "agent": self.agent_id,
+        }
+
+
     def has_position(self, code: str) -> bool:
         return code in self.positions and self.positions[code].get("qty", 0) > 0
 
@@ -161,3 +228,6 @@ class Agent1Scalping:
 
 
 agent1_scalping = Agent1Scalping()
+
+# signal_generator 호환 별칭
+ScalpingAgent = Agent1Scalping

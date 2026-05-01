@@ -195,4 +195,44 @@ def setup_scheduler() -> AsyncIOScheduler:
         id="realtime_trading"
     )
 
+    # ── v2 Agent 전용 배치 태스크 ──────────────────────────────────────────
+
+    # 5. Agent2 시간 청산 (평일 15:10)
+    async def agent2_time_liquidation():
+        from app.engine.agent2_program_day import agent2_program_day
+        from app.data.system_validator import system_validator
+        await system_validator.validate_scheduler("agent2_program_day", "15:10", datetime.now())
+        await agent2_program_day.liquidate_all_positions()
+
+    scheduler.add_job(
+        agent2_time_liquidation,
+        CronTrigger(day_of_week="mon-fri", hour=15, minute=10),
+        id="agent2_time_liquidation"
+    )
+
+    # 6. Agent3 종가 베팅 (평일 15:20)
+    async def agent3_close_betting():
+        from app.engine.agent3_macro_swing import agent3_macro_swing
+        from app.data.system_validator import system_validator
+        await system_validator.validate_scheduler("agent3_macro_swing", "15:20", datetime.now())
+        await agent3_macro_swing.execute_close_betting_routine()
+
+    scheduler.add_job(
+        agent3_close_betting,
+        CronTrigger(day_of_week="mon-fri", hour=15, minute=20),
+        id="agent3_close_betting"
+    )
+
+    # 7. MetaAgent 일일 배분 (평일 15:40)
+    async def meta_agent_allocation():
+        from app.engine.meta_agent_allocator import meta_agent_allocator
+        await meta_agent_allocator.execute_daily_allocation()
+
+    scheduler.add_job(
+        meta_agent_allocation,
+        CronTrigger(day_of_week="mon-fri", hour=15, minute=40),
+        id="meta_agent_allocation"
+    )
+
     return scheduler
+

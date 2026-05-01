@@ -51,3 +51,31 @@ class DailyJournal(Base):
     tomorrow_plan = Column(Text, default="")           # 내일 계획
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class AgentPerformance(Base):
+    """에이전트 성과 추적 (MetaAgentAllocator용) — Main + Shadow Bot"""
+    __tablename__ = "agent_performance"
+
+    id = Column(Integer, primary_key=True, index=True)
+    agent_id = Column(String, unique=True, index=True)
+    parent_agent_id = Column(String, nullable=True, index=True)  # Shadow의 부모 Main Agent
+    parameters = Column(Text, default="{}")  # JSON 직렬화된 파라미터
+    is_shadow = Column(Boolean, default=False)
+    win_rate = Column(Float, default=0.0)
+    sharpe_ratio = Column(Float, default=0.0)
+    mdd = Column(Float, default=0.0)
+    allocation_ratio = Column(Float, default=0.33)
+    status = Column(String, default="ACTIVE")  # ACTIVE, SLEEP
+
+
+class SystemError(Base):
+    """시스템 에러/Anomaly 로그 (SystemValidator용)"""
+    __tablename__ = "system_errors"
+
+    id = Column(Integer, primary_key=True, index=True)
+    timestamp = Column(DateTime, default=datetime.now)
+    anomaly_code = Column(String, index=True)  # Anomaly 01, 02, 03
+    severity = Column(String)  # CRITICAL, WARNING, INFO
+    description = Column(Text)
+    is_resolved = Column(Boolean, default=False)

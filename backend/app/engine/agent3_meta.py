@@ -3,6 +3,7 @@ import logging
 from typing import Dict, Any
 from app.engine.base_agent import BaseAgent
 from app.data.external_api import external_data_manager
+from app.engine.state import global_state
 
 class MetaAgent(BaseAgent):
     """
@@ -23,8 +24,13 @@ class MetaAgent(BaseAgent):
                 "confidence": 0.0
             }
 
-        # 1. 외부 거시 경제 지표 조회 (ECOS 기준금리)
-        base_rate = await external_data_manager.get_base_rate()
+        # 1. 거시 경제 지표: global_state 캐시 우선 사용 (morning_screening에서 수집)
+        # 직접 API 호출은 캐시가 비어있을 때만 폴백
+        cached_macro = global_state.macro_data
+        if cached_macro and cached_macro.get("base_rate", 0) > 0:
+            base_rate = cached_macro["base_rate"]
+        else:
+            base_rate = await external_data_manager.get_base_rate()
         
         # 2. 지수(Index) 기반 레짐 판별
         close = market_data['close']
