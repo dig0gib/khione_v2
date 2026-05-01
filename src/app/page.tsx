@@ -30,10 +30,103 @@ interface JournalEntry {
   tomorrow_plan: string;
 }
 
+// ── 시스템 건전성 패널 (명세서: error_logging_dashboard.md) ──────────────────
+interface SystemErrorItem {
+  date: string;
+  anomaly_code: string;
+  severity: string;
+  status: string;
+  is_resolved: boolean;
+}
+
+function SystemHealthPanel({ apiUrl }: { apiUrl: string }) {
+  const [errors, setErrors] = useState<SystemErrorItem[]>([]);
+  const [lastCheck, setLastCheck] = useState<string>("");
+
+  const fetchErrors = async () => {
+    try {
+      const res = await fetch(`${apiUrl}/api/v1/system/errors`);
+      const data: SystemErrorItem[] = await res.json();
+      setErrors(data);
+    } catch {
+      // 백엔드 미연결 시 빈 배열 유지
+    } finally {
+      setLastCheck(new Date().toLocaleTimeString("ko-KR"));
+    }
+  };
+
+  useEffect(() => {
+    fetchErrors();
+    // 1분 주기 폴링 (명세서 강제)
+    const timer = setInterval(fetchErrors, 60_000);
+    return () => clearInterval(timer);
+  }, [apiUrl]);
+
+  const unresolvedErrors = errors.filter((e) => !e.is_resolved);
+  const hasErrors = unresolvedErrors.length > 0;
+
+  return (
+    <div
+      id="system-health-panel"
+      style={{
+        gridColumn: "1 / -1",
+        padding: "14px 20px",
+        borderRadius: "10px",
+        border: `1px solid ${hasErrors ? "rgba(255,60,60,0.5)" : "rgba(0,220,120,0.4)"}`,
+        background: hasErrors
+          ? "rgba(200,0,0,0.18)"
+          : "rgba(0,180,80,0.12)",
+        display: "flex",
+        flexDirection: "column",
+        gap: "8px",
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <h3 style={{ margin: 0, fontSize: "0.95rem", letterSpacing: "0.05em" }}>
+          {hasErrors ? "🚨 시스템 건전성 현황 — 이상 감지됨" : "🟢 시스템 건전성 현황"}
+        </h3>
+        <span style={{ fontSize: "0.75rem", color: "var(--text-secondary)" }}>
+          마지막 점검: {lastCheck || "—"}
+        </span>
+      </div>
+
+      {hasErrors ? (
+        <ul style={{ margin: 0, paddingLeft: "18px", listStyle: "none" }}>
+          {unresolvedErrors.map((err, idx) => (
+            <li
+              key={idx}
+              style={{
+                padding: "6px 10px",
+                marginBottom: "4px",
+                borderRadius: "6px",
+                background: "rgba(255,40,40,0.15)",
+                borderLeft: `3px solid ${err.severity === "CRITICAL" ? "#ff2020" : "#ff9900"}`,
+                fontSize: "0.85rem",
+              }}
+            >
+              <strong style={{ color: err.severity === "CRITICAL" ? "#ff5555" : "#ffaa00" }}>
+                [{err.severity}]
+              </strong>{" "}
+              <span style={{ color: "#e0e0e0" }}>{err.date}</span>
+              {" — "}
+              <span>{err.status}</span>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p style={{ margin: 0, fontSize: "0.85rem", color: "#a0f0c0" }}>
+          🟢 정상 작동 중 (No Anomalies) — 모든 에이전트 정상 범위 내 운영 중
+        </p>
+      )}
+    </div>
+  );
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 const AGENT_TOOLTIPS: Record<string, string> = {
-  agent1_scalping: "단타/모멘텀: RSI, MACD 기반 단기 추세 포착. STABLE/BULL 레짐에서 비중 높음",
-  agent2_day: "데이/외인: 외국인 순매수 + 거래량 이상 탐지. 변동성 구간에서 활성화",
-  agent3_meta: "스윙/안전: 거시지표(금리, 환율) + DART 공시 기반. FEAR 레짐 방어용",
+  agent1_scalping: "호가창 스캘핑: 호가창 역설(매도잔량/매수잔량 ≥1.5) + 체결강도 ≥150 진입",
+  agent2_program_day: "프로그램 데이: 프로그램 순매수 우상향(Slope) + VWAP ±0.5% 눌림목 진입",
+  agent3_macro_swing: "매크로 스윙: 코스피 3일 연속 하락 + 외국인 선물 순매수 전환 → KODEX레버리지 종가 베팅",
 };
 
 export default function Dashboard() {
@@ -153,7 +246,8 @@ export default function Dashboard() {
 
   return (
     <div className="dashboard-grid">
-      {/* ... (Header, Left Sidebar, Main Content remain same) ... */}
+      {/* 🚨 시스템 건전성 현황 패널 (명세서: error_logging_dashboard.md — 전체 그리드 최상단 강제) */}
+      <SystemHealthPanel apiUrl={API_URL} />
       <header className="header glass-panel">
         <div className="title-glow">❄️ 키오네 (KHIONE) 터미널</div>
         <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
@@ -185,7 +279,7 @@ export default function Dashboard() {
           
           <div className="agent-item" title={AGENT_TOOLTIPS.agent1_scalping}>
             <div className="agent-header">
-              <span>Agent 1 (단타/모멘텀)</span>
+              <span>Agent 1 (호가창 스캘핑)</span>
               <span>{((status?.agent_allocations.agent1_scalping || 0) * 100).toFixed(0)}%</span>
             </div>
             <div className="progress-bg">
@@ -193,23 +287,23 @@ export default function Dashboard() {
             </div>
           </div>
 
-          <div className="agent-item" title={AGENT_TOOLTIPS.agent2_day}>
+          <div className="agent-item" title={AGENT_TOOLTIPS.agent2_program_day}>
             <div className="agent-header">
-              <span>Agent 2 (데이/외인)</span>
-              <span>{((status?.agent_allocations.agent2_day || 0) * 100).toFixed(0)}%</span>
+              <span>Agent 2 (프로그램 데이)</span>
+              <span>{((status?.agent_allocations.agent2_program_day || 0) * 100).toFixed(0)}%</span>
             </div>
             <div className="progress-bg">
-              <div className="progress-fill" style={{ width: `${(status?.agent_allocations.agent2_day || 0) * 100}%` }}></div>
+              <div className="progress-fill" style={{ width: `${(status?.agent_allocations.agent2_program_day || 0) * 100}%` }}></div>
             </div>
           </div>
 
-          <div className="agent-item" title={AGENT_TOOLTIPS.agent3_meta}>
+          <div className="agent-item" title={AGENT_TOOLTIPS.agent3_macro_swing}>
             <div className="agent-header">
-              <span>Agent 3 (스윙/안전)</span>
-              <span>{((status?.agent_allocations.agent3_meta || 0) * 100).toFixed(0)}%</span>
+              <span>Agent 3 (매크로 스윙)</span>
+              <span>{((status?.agent_allocations.agent3_macro_swing || 0) * 100).toFixed(0)}%</span>
             </div>
             <div className="progress-bg">
-              <div className="progress-fill" style={{ width: `${(status?.agent_allocations.agent3_meta || 0) * 100}%` }}></div>
+              <div className="progress-fill" style={{ width: `${(status?.agent_allocations.agent3_macro_swing || 0) * 100}%` }}></div>
             </div>
           </div>
           
